@@ -648,6 +648,10 @@ function engineOf(s){
 function engineLabel(key){
   return key === 'codebuddy' ? 'CodeBuddy' : 'DimAgent';
 }
+function engineDisplay(s){
+  const key = engineOf(s);
+  return String((s && s.engineLabel) || engineLabel(key));
+}
 function statusInfo(s){
   const key = (s && s.jobStatus) || 'stored';
   const labels = {
@@ -780,12 +784,15 @@ function setEngineFilter(key){
 
 function renderEngineSwitch(){
   if (!engineSwitchEl) return;
-  const counts = { all: state.sessions.length, dimagent: 0, codebuddy: 0 };
+  const counts = { all: state.sessions.length };
+  const labels = { all: '全部' };
   for (const s of state.sessions){
     const key = engineOf(s);
-    if (counts[key] != null) counts[key]++;
+    counts[key] = (counts[key] || 0) + 1;
+    labels[key] = engineDisplay(s);
   }
-  const available = (counts.dimagent ? 1 : 0) + (counts.codebuddy ? 1 : 0);
+  const keys = Object.keys(counts).filter(k => k !== 'all');
+  const available = keys.length;
   engineSwitchEl.classList.toggle('hidden', available < 2);
   if (available < 2){
     state.engineFilter = 'all';
@@ -795,11 +802,8 @@ function renderEngineSwitch(){
   if (state.engineFilter !== 'all' && !counts[state.engineFilter]){
     state.engineFilter = 'all';
   }
-  const buttons = [
-    ['all', '全部', counts.all],
-    ['dimagent', 'DimAgent', counts.dimagent],
-    ['codebuddy', 'CodeBuddy', counts.codebuddy],
-  ];
+  const buttons = [['all', '全部', counts.all]]
+    .concat(keys.map(k => [k, labels[k] || k, counts[k]]));
   engineSwitchEl.innerHTML = buttons.map(([key, label, count]) =>
     '<button type="button" class="engine-btn' + (state.engineFilter === key ? ' active' : '') +
     '" data-engine="' + esc(key) + '" aria-pressed="' + String(state.engineFilter === key) + '">' +
@@ -872,7 +876,7 @@ function sessionItem(s, childCount, depth){
     ? '<span class="badge sub">' + esc(s.subagentType || '子代理') + '</span>'
     : '<span class="badge main">主会话</span>';
   const engineBadge = state.engineFilter === 'all'
-    ? '<span class="badge engine ' + engine + '">' + esc(engineLabel(engine)) + '</span>'
+    ? '<span class="badge engine ' + engine + '">' + esc(engineDisplay(s)) + '</span>'
     : '';
   const twist = childCount
     ? '<button class="twist' + (collapsed ? ' closed' : '') + '" data-twist="' + esc(s.id) + '"' +
@@ -906,7 +910,9 @@ function renderSidebar(){
   listEl.innerHTML = '';
   if (!all.length){
     listEl.innerHTML = '<div class="side-empty"><div class="spark">✳</div>暂无会话' +
-      '<span>在 ' + esc(state.engineFilter === 'all' ? 'Nipah 子代理' : engineLabel(state.engineFilter)) +
+      '<span>在 ' + esc(state.engineFilter === 'all' ? 'Nipah 子代理' :
+        ((state.sessions.find(s => engineOf(s) === state.engineFilter) &&
+          engineDisplay(state.sessions.find(s => engineOf(s) === state.engineFilter))) || engineLabel(state.engineFilter))) +
       ' 里跑任务后，会话会实时出现在这里</span></div>';
     return;
   }
@@ -1003,7 +1009,7 @@ function updateHead(){
   const live = isLive(s);
   const status = statusInfo(s);
   const parts = [];
-  parts.push('<span class="pill engine">' + esc(engineLabel(engineOf(s))) + '</span>');
+  parts.push('<span class="pill engine">' + esc(engineDisplay(s)) + '</span>');
   parts.push('<span class="pill ' + esc(status.key) + '">' +
     (live ? '<span class="pulse"></span>' : '') + esc(status.label) + '</span>');
   if (s.isSubagent){

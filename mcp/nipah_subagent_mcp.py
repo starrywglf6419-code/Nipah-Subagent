@@ -162,6 +162,7 @@ def combined_sessions(limit: int = 500) -> list[dict]:
                 row = dict(item)
                 row["source"] = engine
                 row["engine"] = engine
+                row["engineLabel"] = _engine_label(engine)
                 row["providerId"] = row.get("providerId") or _engine_label(engine)
                 out.append(row)
         except Exception:
