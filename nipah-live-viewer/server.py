@@ -14,6 +14,7 @@ server owns no provider-specific parsing.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import importlib.util
 import json
 import os
@@ -40,6 +41,7 @@ def load_module(name: str, path: str):
 
 base = load_module("nipah_live_viewer_base", BASE_SERVER)
 nipah = load_module("nipah_live_viewer_facade", FACADE)
+LOCK_HANDLE = None
 
 
 def fetch_sessions(_db_path, _runs_dir=""):
@@ -48,6 +50,16 @@ def fetch_sessions(_db_path, _runs_dir=""):
 
 def fetch_messages(_db_path, session, offset, source=""):
     return nipah.combined_messages(source, session, offset)
+
+
+def acquire_single_instance(port: int) -> bool:
+    """Prevent a second viewer process from racing the same endpoint."""
+    global LOCK_HANDLE
+    if os.name != "nt":
+        return True
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    LOCK_HANDLE = kernel32.CreateMutexW(None, False, f"Local\\NipahSubagentViewer-{port}")
+    return bool(LOCK_HANDLE) and ctypes.get_last_error() != 183
 
 
 class Handler(base.Handler):
@@ -77,6 +89,9 @@ class Handler(base.Handler):
                     "'nipah_live_messages'",
                 )
                 self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+                return
+            if path == "/health":
+                self._json({"ok": True, "service": "nipah-subagent-viewer"})
                 return
             if path == "/api/sessions":
                 self._json({"ok": True, "now": None, "sessions": fetch_sessions("", "")})
@@ -111,6 +126,9 @@ def main() -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8792)
     args = ap.parse_args()
+    if not acquire_single_instance(args.port):
+        print(f"Nipah Subagent viewer already running on port {args.port}")
+        return 0
     srv = None
     port = args.port
     for offset in range(12):

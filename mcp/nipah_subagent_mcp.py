@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -101,51 +102,102 @@ def _revision() -> str:
 PANEL_URI = "ui://nipah/subagent/" + _revision()
 
 
-def _viewer_health() -> bool:
+def _viewer_url_at(port: int) -> str:
+    return f"http://127.0.0.1:{port}/"
+
+
+def _health_at(url: str) -> bool:
     try:
-        with urllib.request.urlopen(VIEWER_URL.rstrip("/") + "/api/sessions", timeout=1.5) as resp:
+        with urllib.request.urlopen(url.rstrip("/") + "/health", timeout=1.5) as resp:
             return 200 <= resp.status < 300
     except (urllib.error.URLError, OSError, ValueError):
         return False
 
 
-def ensure_viewer() -> dict:
-    if _viewer_health():
-        return {"running": True, "url": VIEWER_URL, "started": False}
-    for port in range(VIEWER_PORT + 1, VIEWER_PORT + 13):
-        url = f"http://127.0.0.1:{port}/"
-        try:
-            with urllib.request.urlopen(url.rstrip("/") + "/api/sessions", timeout=1.0) as resp:
-                if 200 <= resp.status < 300:
-                    return {"running": True, "url": url, "started": False, "port": port}
-        except (urllib.error.URLError, OSError, ValueError):
-            continue
-    if not os.path.isfile(VIEWER_SCRIPT):
-        return {"running": False, "url": VIEWER_URL, "started": False,
-                "note": f"viewer script missing: {VIEWER_SCRIPT}"}
-    creation = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
+def _find_viewer_url() -> str:
+    for port in range(VIEWER_PORT, VIEWER_PORT + 13):
+        url = _viewer_url_at(port)
+        if _health_at(url):
+            return url
+    return ""
+
+
+def _viewer_health() -> bool:
+    return bool(_find_viewer_url())
+
+
+def _viewer_lock():
+    """Cross-process startup lock so concurrent MCP instances don't spawn duplicates."""
+    path = os.path.join(tempfile.gettempdir(), "nipah-subagent-viewer.lock")
     try:
-        subprocess.Popen(
-            [sys.executable, VIEWER_SCRIPT, "--port", str(VIEWER_PORT)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL, creationflags=creation, close_fds=True,
-        )
-    except OSError as exc:
-        return {"running": False, "url": VIEWER_URL, "started": False, "note": str(exc)}
-    for _ in range(24):
-        time.sleep(0.35)
-        if _viewer_health():
-            return {"running": True, "url": VIEWER_URL, "started": True}
-        for port in range(VIEWER_PORT + 1, VIEWER_PORT + 13):
-            url = f"http://127.0.0.1:{port}/"
-            try:
-                with urllib.request.urlopen(url.rstrip("/") + "/api/sessions", timeout=0.6) as resp:
-                    if 200 <= resp.status < 300:
-                        return {"running": True, "url": url, "started": True, "port": port}
-            except (urllib.error.URLError, OSError, ValueError):
-                continue
-    return {"running": False, "url": VIEWER_URL, "started": True,
-            "note": "started but health check failed"}
+        if os.path.isfile(path) and time.time() - os.path.getmtime(path) > 90:
+            os.remove(path)
+    except OSError:
+        pass
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        return fd, path
+    except FileExistsError:
+        return None, path
+    except OSError:
+        return None, path
+
+
+def ensure_viewer() -> dict:
+    found = _find_viewer_url()
+    if found:
+        return {"running": True, "url": found, "started": False}
+    lock_fd, lock_path = _viewer_lock()
+    if lock_fd is None:
+        for _ in range(24):
+            time.sleep(0.35)
+            found = _find_viewer_url()
+            if found:
+                return {"running": True, "url": found, "started": False}
+        # The startup lock is advisory. If the owner died before the socket
+        # came up, don't leave every caller stuck in the "starting" branch.
+        try:
+            os.remove(lock_path)
+        except OSError:
+            pass
+        lock_fd, lock_path = _viewer_lock()
+        if lock_fd is None:
+            return {"running": False, "url": VIEWER_URL, "started": False,
+                    "note": "viewer startup did not become healthy"}
+    try:
+        # Re-check after acquiring the lock; another process may have won.
+        found = _find_viewer_url()
+        if found:
+            return {"running": True, "url": found, "started": False}
+        if not os.path.isfile(VIEWER_SCRIPT):
+            return {"running": False, "url": VIEWER_URL, "started": False,
+                    "note": f"viewer script missing: {VIEWER_SCRIPT}"}
+        creation = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
+        try:
+            subprocess.Popen(
+                [sys.executable, VIEWER_SCRIPT, "--port", str(VIEWER_PORT)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL, creationflags=creation, close_fds=True,
+            )
+        except OSError as exc:
+            return {"running": False, "url": VIEWER_URL, "started": False, "note": str(exc)}
+        for _ in range(24):
+            time.sleep(0.35)
+            found = _find_viewer_url()
+            if found:
+                return {"running": True, "url": found, "started": True}
+        return {"running": False, "url": VIEWER_URL, "started": True,
+                "note": "started but health check failed"}
+    finally:
+        try:
+            os.close(lock_fd)
+        except OSError:
+            pass
+        try:
+            os.remove(lock_path)
+        except OSError:
+            pass
 
 
 def combined_sessions(limit: int = 500) -> list[dict]:
