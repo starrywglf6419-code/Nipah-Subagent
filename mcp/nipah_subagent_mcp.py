@@ -399,7 +399,10 @@ def nipah_doctor(args: dict) -> str:
         lines.append(f"{_engine_label(engine)}:")
         module = PROVIDER_MODULES.get(engine)
         if module is not None and hasattr(module, "tool_doctor"):
-            lines.append(module.tool_doctor({}))
+            try:
+                lines.append(module.tool_doctor({}))
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"doctor failed: {type(exc).__name__}: {exc}")
         else:
             lines.append("(no doctor method)")
         lines.append("")
