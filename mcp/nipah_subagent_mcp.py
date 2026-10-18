@@ -232,8 +232,6 @@ def _source_of(session_id: str) -> str:
 
 def combined_messages(source: str, session_id: str, offset: int = 0) -> dict:
     source = source or _source_of(session_id)
-    if source == "codebuddy":
-        return CB.fetch_messages(session_id, offset)
     if source in PROVIDER_MODULES and source != "dimagent":
         module = PROVIDER_MODULES[source]
         if hasattr(module, "fetch_messages"):
@@ -382,14 +380,21 @@ def nipah_doctor(args: dict) -> str:
     viewer = ensure_viewer()
     lines = [
         f"Nipah Subagent {VERSION} · pid {os.getpid()}",
-        f"engine dimagent: {DA.dim_path() if hasattr(DA, 'dim_path') else '-'}",
-        f"engine codebuddy: {CB.codebuddy_version()}",
         f"viewer: {viewer.get('url')} {'running' if viewer.get('running') else 'stopped'}",
         f"panel: {PANEL_URI}",
         f"engines: {', '.join(ENGINE_IDS)}",
         "provider registry: " + PROVIDERS_FILE,
         "",
     ]
+    for engine in ENGINE_IDS:
+        module = PROVIDER_MODULES.get(engine)
+        if engine == "dimagent" and module is not None and hasattr(module, "dim_path"):
+            detail = module.dim_path()
+        elif hasattr(module, "codebuddy_version"):
+            detail = module.codebuddy_version()
+        else:
+            detail = "-"
+        lines.insert(1, f"engine {engine}: {detail}")
     for engine in ENGINE_IDS:
         lines.append(f"{_engine_label(engine)}:")
         module = PROVIDER_MODULES.get(engine)
@@ -405,7 +410,10 @@ def nipah_cli(args: dict) -> str:
     engine = _engine(str(args.get("engine") or "dimagent"))
     prepared = dict(args)
     prepared.pop("engine", None)
-    return DA.tool_cli(prepared) if engine == "dimagent" else CB.tool_cli(prepared)
+    module = PROVIDER_MODULES[engine]
+    if not hasattr(module, "tool_cli"):
+        return f"{_engine_label(engine)} 没有 CLI 透传入口。"
+    return module.tool_cli(prepared)
 
 
 def nipah_live_sessions(args: dict) -> dict:
@@ -438,7 +446,10 @@ def panel_html() -> str:
     except OSError as exc:
         return "<!doctype html><meta charset='utf-8'><body>Nipah panel load failed: " + str(exc) + "</body>"
     html = html.replace("DimAgent · 实时会话", "Nipah Subagent · 实时会话")
-    html = html.replace('<span class="name">DimAgent</span>', '<span class="name">Nipah</span><small>Subagent</small>')
+    html = html.replace(
+        '<span><span class="name">DimAgent</span><small>实时会话</small></span>',
+        '<span><span class="name">Nipah</span><small>Subagent · 实时会话</small></span>',
+    )
     html = html.replace("只读视图 · dimcode.sqlite", "只读视图 · Nipah 会话")
     html = html.replace("正在连接 DimAgent 数据", "正在连接 Nipah 数据")
     html = html.replace(

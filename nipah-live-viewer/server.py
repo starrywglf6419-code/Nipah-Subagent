@@ -75,8 +75,8 @@ class Handler(base.Handler):
                     html = fh.read()
                 html = html.replace("DimAgent · 实时会话", "Nipah Subagent · 实时会话")
                 html = html.replace(
-                    '<span class="name">DimAgent</span>',
-                    '<span class="name">Nipah</span><small>Subagent</small>',
+                    '<span><span class="name">DimAgent</span><small>实时会话</small></span>',
+                    '<span><span class="name">Nipah</span><small>Subagent · 实时会话</small></span>',
                 )
                 html = html.replace("只读视图 · dimcode.sqlite", "只读视图 · Nipah 会话")
                 html = html.replace("正在连接 DimAgent 数据", "正在连接 Nipah 数据")
