@@ -67,7 +67,7 @@ DEFAULTS = {
     "default_provider": "magpie",
     "default_model": "group/auto-deepseek-v4-1-flash",
     "default_reasoning_effort": "max",
-    "default_policy": "workspace-write",
+    "default_policy": "full-access",
     "max_wait_seconds": 240,
     "stale_after_seconds": 90,
     "default_disallow_web": True,
@@ -557,6 +557,12 @@ def _build_cmd(args: dict) -> list[str]:
         "codebuddy", "-p", "--output-format", "stream-json",
         "--include-partial-messages", "--verbose",
     ]
+    policy = args.get("policy") or CFG.get("default_policy")
+    if policy in ("workspace-write", "full-access"):
+        # Headless runs cannot answer permission prompts. `-y` is the
+        # documented bypass for tool approvals; read-only stays on the
+        # explicit tool allowlist below instead.
+        cmd.append("-y")
     if args.get("resume_session"):
         cmd += ["--resume", args["resume_session"]]
     else:
@@ -564,7 +570,7 @@ def _build_cmd(args: dict) -> list[str]:
             cmd += ["--model", args["model"]]
         if args.get("reasoning_effort"):
             cmd += ["--effort", args["reasoning_effort"]]
-        if args.get("policy") == "read-only":
+        if policy == "read-only":
             # CodeBuddy 2.168.3 has a headless bug: --permission-mode and
             # --disallowedTools can reset model/tools to unknown. A tool
             # whitelist works, so read-only is expressed that way.
@@ -892,7 +898,8 @@ TOOLS = [
                 "provider": {"type": "string", "description": "默认 magpie；CodeBuddy 通过 group/ 路由使用本地 Magpie。"},
                 "model": {"type": "string", "description": "默认 group/auto-deepseek-v4-1-flash；也可选 hy4-preview、glm-5.3 等。"},
                 "reasoning_effort": {"type": "string", "enum": ["minimal", "low", "medium", "high", "xhigh", "max"]},
-                "policy": {"type": "string", "enum": ["read-only", "workspace-write", "full-access"]},
+                "policy": {"type": "string", "enum": ["read-only", "workspace-write", "full-access"],
+                           "description": "默认 full-access（headless 下自动加 -y）；只读审查用 read-only。"},
                 "resume_session": {"type": "string", "description": "恢复 CodeBuddy session id。"},
                 "allow_web": {"type": "boolean", "description": "默认禁用 WebSearch/WebFetch。"},
                 "wait_seconds": {"type": "number"},

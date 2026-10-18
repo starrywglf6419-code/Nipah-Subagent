@@ -11,8 +11,8 @@ Nipah Subagent 是这台机器上的统一子代理入口。它不替代某个 C
 
 | engine | CLI | 默认 provider / model | 默认强度 |
 | --- | --- | --- | --- |
-| `dimagent` | `dim` | `custom-magpie-23a641a9` / `group/auto-deepseek-v4-1-flash` | `max` |
-| `codebuddy` | `codebuddy` | `magpie` / `group/auto-deepseek-v4-1-flash` | `max` |
+| `dimagent` | `dim` | `custom-magpie-23a641a9` / `group/auto-deepseek-v4-1-flash` | `max` / `full-access` |
+| `codebuddy` | `codebuddy` | `magpie` / `group/auto-deepseek-v4-1-flash` | `max` / `full-access` |
 
 ## 首选：MCP 工具
 
@@ -47,7 +47,7 @@ Nipah Subagent 是这台机器上的统一子代理入口。它不替代某个 C
 
 执行侧：
 
-1. 先 `nipah_run(engine=..., prompt=..., cwd=..., provider=..., model=..., reasoning_effort="max")` 拿 `jobId`。
+1. 先 `nipah_run(engine=..., prompt=..., cwd=..., provider=..., model=..., reasoning_effort="max")` 拿 `jobId`。权限默认 `full-access`，需要只读时显式传 `policy="read-only"`。
 2. 用 `nipah_wait(job_id=..., timeout_seconds=45)` 确认真起步，不要一口气等到宿主 300s 截断。
 3. 长任务先返回 job 号；后续用 `nipah_status` / `nipah_result` 收尾。
 4. 需要过程时调用 `nipah_panel`，或 `nipah_viewer` 拿 URL 后用浏览器打开；统一页面可切换 `全部 / DimAgent / CodeBuddy`。
@@ -56,9 +56,9 @@ Nipah Subagent 是这台机器上的统一子代理入口。它不替代某个 C
 
 ## 权限与联网
 
-- `policy="read-only"`：只读审查，DimAgent 用原生只读预设；CodeBuddy 用 `Read,Glob,Grep` 白名单。
-- `policy="workspace-write"`：默认，能读写 `cwd`。
-- `policy="full-access"`：完全权限，非必要不要用。
+- `policy="full-access"`：默认。DimAgent 使用原生完全访问预设；CodeBuddy 在 headless 下自动加 `-y`，不会卡在交互审批。
+- `policy="workspace-write"`：限制在 `cwd` 读写；CodeBuddy 同样自动加 `-y` 以便 headless 工具执行。
+- `policy="read-only"`：只读审查，DimAgent 用原生只读预设；CodeBuddy 用 `Read,Glob,Grep` 白名单，且不加 `-y`。
 - **默认禁用 WebSearch/WebFetch**：两个适配层都会在未显式 `allow_web=true` 时加约束。用户后台有搜索配额，普通代码/文件任务不要联网。
 - CodeBuddy 2.168.3 的 headless 限制：适配器不使用 `--permission-mode` / `--disallowedTools`，所以 CodeBuddy 的联网禁用是提示词约束，不是强沙箱。
 

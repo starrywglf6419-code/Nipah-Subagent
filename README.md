@@ -6,8 +6,8 @@
 
 | engine | CLI | 默认 provider / model | 默认强度 |
 | --- | --- | --- | --- |
-| `dimagent` | `dim` | `custom-magpie-23a641a9` / `group/auto-deepseek-v4-1-flash` | `max` |
-| `codebuddy` | `codebuddy` | `magpie` / `group/auto-deepseek-v4-1-flash` | `max` |
+| `dimagent` | `dim` | `custom-magpie-23a641a9` / `group/auto-deepseek-v4-1-flash` | `max` / `full-access` |
+| `codebuddy` | `codebuddy` | `magpie` / `group/auto-deepseek-v4-1-flash` | `max` / `full-access` |
 
 Codex 中只安装一个插件 **Nipah Subagent**。新增 engine 时改 `mcp/providers.json` 并补适配模块，不需要再新增插件入口。
 
@@ -53,7 +53,7 @@ enabled = true
 | `nipah_feedback` | 记录反馈 |
 | `nipah_panel` | 打开统一 MCP App 面板 |
 
-`job_*` 自动识别为 DimAgent，`cbjob_*` 自动识别为 CodeBuddy。
+`job_*` 自动识别为 DimAgent，`cbjob_*` 自动识别为 CodeBuddy。权限默认 `full-access`；只读任务显式传 `policy="read-only"`。CodeBuddy 在非只读的 headless 任务中自动加 `-y`，避免工具审批卡死。
 
 ## 统一监控页
 
@@ -93,7 +93,7 @@ enabled = true
 
 ## 已知限制
 
-- CodeBuddy 2.168.3 的 `--permission-mode` / `--disallowedTools` 在 `-p` 下可能重置模型和工具集，适配器不使用它们；CodeBuddy 的联网禁用是提示词约束，不是强沙箱。
+- CodeBuddy 2.168.3 的 `--permission-mode` / `--disallowedTools` 在 `-p` 下可能重置模型和工具集，适配器不使用它们；非只读任务用 `-y` 跳过审批。CodeBuddy 的联网禁用仍是提示词约束，不是强沙箱。
 - 插件和 MCP App 入口只在 Codex 启动时注册；更新后需要重启 Codex。
 - DimAgent 的 WebSearch/WebFetch 有配额，默认关闭，只有显式 `allow_web=true` 才放行。
 

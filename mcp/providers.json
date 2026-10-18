@@ -6,7 +6,8 @@
       "jobPrefix": "job_",
       "defaultProvider": "custom-magpie-23a641a9",
       "defaultModel": "group/auto-deepseek-v4-1-flash",
-      "defaultReasoningEffort": "max"
+      "defaultReasoningEffort": "max",
+      "defaultPolicy": "full-access"
     },
     "codebuddy": {
       "label": "CodeBuddy",
@@ -14,7 +15,8 @@
       "jobPrefix": "cbjob_",
       "defaultProvider": "magpie",
       "defaultModel": "group/auto-deepseek-v4-1-flash",
-      "defaultReasoningEffort": "max"
+      "defaultReasoningEffort": "max",
+      "defaultPolicy": "full-access"
     }
   }
 }

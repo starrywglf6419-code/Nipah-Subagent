@@ -80,7 +80,7 @@ DEFAULTS = {
     # custom one), so always pin the intended default provider explicitly.
     "default_provider": os.environ.get("DIMAGENT_PROVIDER") or "opencode-go",
     "default_reasoning_effort": "max",
-    "default_policy": "workspace-write",
+    "default_policy": "full-access",
     # 宿主单次工具调用约 300s 截断，MCP 等待必须留余量
     "max_wait_seconds": 240,
     # 无进程可查时，事件流超过该秒数没有更新就降级为 stale
@@ -2063,7 +2063,7 @@ TOOLS = [
                                      "description": "推理档位，默认 max（deepseek-v4.1-flash 支持 high|max）。"},
                 "mode": {"type": "string", "enum": ["agent", "plan", "goal"], "description": "运行模式，默认 agent。"},
                 "policy": {"type": "string", "enum": ["read-only", "workspace-write", "full-access"],
-                           "description": "权限预设，默认 workspace-write。只读审查用 read-only。"},
+                           "description": "权限预设，默认 full-access。只读审查用 read-only。"},
                 "verify": {"type": "string", "description": "完成后的验收命令（可选，可写多条用 ; 分隔）。"},
                 "repair_attempts": {"type": "integer", "description": "验收失败后的自动修复轮数。"},
                 "session_id": {"type": "string", "description": "载入已有 session 继续跑；会沿用旧模型与权限，model/provider/policy 覆盖会被拒绝。"},
