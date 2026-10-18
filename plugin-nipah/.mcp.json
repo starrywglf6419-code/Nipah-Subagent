@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "nipah": {
+      "command": "C:\\Users\\Admin\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe",
+      "args": [
+        "-3",
+        "C:\\Users\\Admin\\Documents\\Starry Projects\\Nipah Subagent\\mcp\\nipah_subagent_mcp.py"
+      ]
+    }
+  }
+}

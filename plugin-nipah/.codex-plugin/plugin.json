@@ -1,0 +1,27 @@
+{
+  "name": "nipah-subagent",
+  "version": "2.0.0",
+  "description": "Nipah Subagent：一个可扩展的 Codex 子代理入口，统一调用本机 DimAgent / CodeBuddy，并在侧边面板实时查看完整会话。",
+  "author": {
+    "name": "starrywglf6419-code"
+  },
+  "license": "MIT",
+  "keywords": [
+    "nipah",
+    "subagent",
+    "dimagent",
+    "codebuddy",
+    "mcp",
+    "session viewer",
+    "agent"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Nipah Subagent",
+    "shortDescription": "统一调度本机子代理并实时查看会话",
+    "longDescription": "一个通用的 Nipah 子代理入口：通过 engine 参数调用 DimAgent、CodeBuddy 等本机 Agent CLI，后台派发、续跑、查状态、取结果；统一监控页可切换查看各引擎的会话、思考链、工具调用和最终正文。引擎清单由 mcp/providers.json 驱动，后续新增 CLI 不需要再安装新的 Codex 插件。",
+    "developerName": "starrywglf6419-code",
+    "category": "Engineering"
+  }
+}

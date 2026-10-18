@@ -1,0 +1,20 @@
+{
+  "engines": {
+    "dimagent": {
+      "label": "DimAgent",
+      "module": "dimagent_mcp.py",
+      "jobPrefix": "job_",
+      "defaultProvider": "custom-magpie-23a641a9",
+      "defaultModel": "group/auto-deepseek-v4-1-flash",
+      "defaultReasoningEffort": "max"
+    },
+    "codebuddy": {
+      "label": "CodeBuddy",
+      "module": "codebuddy_mcp.py",
+      "jobPrefix": "cbjob_",
+      "defaultProvider": "magpie",
+      "defaultModel": "group/auto-deepseek-v4-1-flash",
+      "defaultReasoningEffort": "max"
+    }
+  }
+}
