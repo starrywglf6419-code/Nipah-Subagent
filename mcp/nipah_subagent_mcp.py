@@ -28,7 +28,7 @@ PANEL_MIME = "text/html;profile=mcp-app"
 VIEWER_URL = os.environ.get("NIPAH_VIEWER_URL", "http://127.0.0.1:8792/")
 VIEWER_PORT = int(os.environ.get("NIPAH_VIEWER_PORT", "8792"))
 IS_WINDOWS = os.name == "nt"
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 PROVIDERS_FILE = os.path.join(HERE, "providers.json")
 
 
@@ -230,16 +230,29 @@ def _source_of(session_id: str) -> str:
     return ""
 
 
-def combined_messages(source: str, session_id: str, offset: int = 0) -> dict:
+def combined_messages(source: str, session_id: str, offset: int = 0,
+                      profile: str = "") -> dict:
     source = source or _source_of(session_id)
     if source in PROVIDER_MODULES and source != "dimagent":
         module = PROVIDER_MODULES[source]
         if hasattr(module, "fetch_messages"):
+            if profile and source == "codebuddy":
+                try:
+                    return module.fetch_messages(session_id, offset, profile)
+                except TypeError:
+                    pass
             try:
                 return module.fetch_messages(session_id, offset)
             except TypeError:
                 return module.fetch_messages(source, session_id, offset)
     return _load_viewer().fetch_messages(DA.db_path(), session_id, offset)
+
+
+def _profile_arg(args: dict, engine: str) -> str:
+    """账号 profile 只对支持它的引擎有意义，其余引擎直接忽略。"""
+    if engine != "codebuddy":
+        return ""
+    return str(args.get("profile") or "").strip()
 
 
 def _engine(value: str = "", job_id: str = "", session_id: str = "") -> str:
@@ -260,6 +273,8 @@ def _engine(value: str = "", job_id: str = "", session_id: str = "") -> str:
 def _run_args(args: dict, engine: str) -> dict:
     out = dict(args)
     out.pop("engine", None)
+    if engine != "codebuddy":
+        out.pop("profile", None)
     if engine == "dimagent" and out.get("resume_session"):
         out["session_id"] = out.pop("resume_session")
         out["resume"] = True
@@ -336,9 +351,11 @@ def nipah_sessions(args: dict) -> str:
         return "Nipah Subagent 还没有会话。"
     out = [f"最近 {len(sessions)} 个 Nipah 会话：", ""]
     for item in sessions:
+        profile = str(item.get("profile") or "")
         out.append(
             f"- [{item.get('engine')}] {item.get('id')}  [{item.get('jobStatus') or 'stored'}]  "
-            f"{item.get('title') or item.get('subagentPrompt') or '(无标题)'}"
+            + (f"({profile}) " if profile else "")
+            + f"{item.get('title') or item.get('subagentPrompt') or '(无标题)'}"
         )
         out.append(
             f"    {item.get('messageCount', 0)} 条 · {item.get('modelId') or item.get('model') or '-'} · "
@@ -369,6 +386,16 @@ def nipah_providers(args: dict) -> str:
             f"{cfg.get('default_model') or spec.get('defaultModel') or '-'} / "
             f"effort {cfg.get('default_reasoning_effort') or spec.get('defaultReasoningEffort') or '-'}"
         )
+        if module is not None and hasattr(module, "profile_status"):
+            try:
+                rows = module.profile_status()
+            except Exception:  # noqa: BLE001
+                rows = []
+            if rows:
+                lines.append("    profile: " + " / ".join(
+                    f"{row['profile']}={row['label']}{'' if row['auth'] else '(未登录)'}"
+                    for row in rows
+                ) + f"（默认 {cfg.get('default_profile') or '本机账号'}）")
     lines.append(
         "扩展方式：在 mcp/providers.json 增加 engine，并提供 run/status/wait/result/stop/"
         "sessions/fetch_messages；统一监控与 MCP 工具无需再改协议。"
@@ -432,12 +459,13 @@ def nipah_live_messages(args: dict) -> dict:
     if not sid:
         return {"ok": False, "error": "missing session"}
     source = str(args.get("source") or "").strip() or _source_of(sid)
+    profile = str(args.get("profile") or "").strip()
     try:
         offset = max(0, int(args.get("offset") or 0))
     except (TypeError, ValueError):
         offset = 0
     try:
-        return {"ok": True, **combined_messages(source, sid, offset)}
+        return {"ok": True, **combined_messages(source, sid, offset, profile)}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
@@ -491,8 +519,10 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "engine": {"type": "string", "enum": ENGINE_IDS, "description": "默认 dimagent。"},
-                "provider": {"type": "string", "description": "底层模型供应商；DimAgent 可用 magpie，CodeBuddy 默认 magpie。"},
-                "model": {"type": "string", "description": "引擎默认值；DimAgent 默认按配置，CodeBuddy 默认 group/auto-deepseek-v4-1-flash。"},
+                "profile": {"type": "string", "enum": ["cn", "intl"],
+                            "description": "CodeBuddy 账号：cn=WorkBuddy 国内版，intl=WorkBuddy 国际版；不传用本机默认账号。DimAgent 忽略该参数。"},
+                "provider": {"type": "string", "description": "底层模型供应商；DimAgent 可用 magpie。CodeBuddy 无供应商概念，该字段只做标注。"},
+                "model": {"type": "string", "description": "引擎默认值；DimAgent 默认按配置，CodeBuddy 默认 deepseek-v4.1-flash。"},
                 "prompt": {"type": "string"},
                 "cwd": {"type": "string"},
                 "reasoning_effort": {"type": "string", "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"]},
@@ -530,6 +560,8 @@ TOOLS = [
         "session_id": {"type": "string"}, "force": {"type": "boolean"}}}},
     {"name": "nipah_resume", "description": "续跑已存在的 DimAgent 或 CodeBuddy 会话。", "inputSchema": {"type": "object", "properties": {
         "engine": {"type": "string", "enum": ENGINE_IDS}, "session_id": {"type": "string"},
+        "profile": {"type": "string", "enum": ["cn", "intl"],
+                    "description": "CodeBuddy 续跑时必须用原会话所属账号。"},
         "prompt": {"type": "string"}, "cwd": {"type": "string"},
         "reasoning_effort": {"type": "string"},
         "policy": {"type": "string", "description": "默认 full-access；只读审查用 read-only。"},
@@ -564,7 +596,8 @@ TOOLS = [
     },
     {"name": "nipah_live_sessions", "description": "统一面板数据：两个引擎的会话列表。", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "nipah_live_messages", "description": "统一面板数据：按会话来源读取消息增量。", "inputSchema": {
-        "type": "object", "properties": {"source": {"type": "string"}, "session": {"type": "string"}, "offset": {"type": "integer"}},
+        "type": "object", "properties": {"source": {"type": "string"}, "session": {"type": "string"},
+                                         "profile": {"type": "string"}, "offset": {"type": "integer"}},
         "required": ["session"]}},
 ]
 

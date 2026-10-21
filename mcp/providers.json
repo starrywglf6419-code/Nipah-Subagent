@@ -13,8 +13,8 @@
       "label": "CodeBuddy",
       "module": "codebuddy_mcp.py",
       "jobPrefix": "cbjob_",
-      "defaultProvider": "magpie",
-      "defaultModel": "group/auto-deepseek-v4-1-flash",
+      "defaultProvider": "codebuddy",
+      "defaultModel": "deepseek-v4.1-flash",
       "defaultReasoningEffort": "max",
       "defaultPolicy": "full-access"
     }

@@ -32,7 +32,11 @@ DATA_DIR = os.environ.get("CODEBUDDY_SUBAGENT_DATA") or os.path.join(
 )
 RUNS_DIR = os.path.join(DATA_DIR, "runs")
 WORKSPACE_DIR = os.path.join(DATA_DIR, "workspace")
+PROFILES_ROOT = os.environ.get("CODEBUDDY_PROFILES_ROOT") or os.path.join(
+    LOCAL_APP_DATA, "CodeBuddyProfiles"
+)
 IS_WINDOWS = os.name == "nt"
+VERSION = "1.1.0"
 
 
 def _panel_revision() -> str:
@@ -64,8 +68,15 @@ DA = _load_dimagent_module()
 DEFAULTS = {
     "codebuddy_bin": "",
     "default_cwd": "",
-    "default_provider": "magpie",
-    "default_model": "group/auto-deepseek-v4-1-flash",
+    "default_profile": "",
+    "profiles": {
+        "cn": {"label": "WorkBuddy 国内版", "root": os.path.join(PROFILES_ROOT, "cn")},
+        "intl": {"label": "WorkBuddy 国际版", "root": os.path.join(PROFILES_ROOT, "intl")},
+    },
+    # CodeBuddy 官方 CLI 没有供应商概念，模型来自登录账号的目录；
+    # provider 只作为输出里的标注字段保留。
+    "default_provider": "codebuddy",
+    "default_model": "deepseek-v4.1-flash",
     "default_reasoning_effort": "max",
     "default_policy": "full-access",
     "max_wait_seconds": 240,
@@ -124,6 +135,93 @@ def _newest(paths):
     return max(found, key=os.path.getmtime) if found else ""
 
 
+# ---------------------------------------------------------------- profiles --
+# 只做官方 CLI 的账号隔离：把 HOME/APPDATA/LOCALAPPDATA 和产品配置指针指到
+# profile 目录，并剔除父进程可能导出的凭据变量。不复制、不导出 token。
+_PROFILE_ENV_STRIP = (
+    "CODEBUDDY_AUTH_TOKEN",
+    "CODEBUDDY_API_KEY",
+    "CODEBUDDY_GATEWAY",
+    "WORKBUDDY_PAC_RPC",
+)
+
+
+def profile_names() -> list[str]:
+    profiles = CFG.get("profiles")
+    return list(profiles) if isinstance(profiles, dict) else []
+
+
+def _profile_spec(profile: str) -> dict:
+    profiles = CFG.get("profiles") if isinstance(CFG.get("profiles"), dict) else {}
+    spec = profiles.get(profile)
+    if spec is None:
+        raise RuntimeError(
+            "unknown profile: %s (available: %s)" % (profile, ", ".join(profiles) or "-")
+        )
+    return {"root": spec} if isinstance(spec, str) else dict(spec)
+
+
+def profile_root(profile: str) -> str:
+    root = _expand(_profile_spec(profile).get("root") or "")
+    if not root or not os.path.isdir(root):
+        raise RuntimeError(f"profile dir not found: {root or profile}")
+    return root
+
+
+def _profile_label(profile: str) -> str:
+    if not profile:
+        return ""
+    try:
+        return str(_profile_spec(profile).get("label") or profile)
+    except RuntimeError:
+        return profile
+
+
+def _profile_display(profile: str) -> str:
+    return "本机默认账号" if not profile else f"{_profile_label(profile)}（{profile}）"
+
+
+def _profile_env(profile: str = "") -> dict:
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.upper().startswith(_PROFILE_ENV_STRIP)
+    }
+    if not profile:
+        return env
+    root = profile_root(profile)
+    env.update({
+        "USERPROFILE": root,
+        "HOME": root,
+        "APPDATA": os.path.join(root, "AppData", "Roaming"),
+        "LOCALAPPDATA": os.path.join(root, "AppData", "Local"),
+        "ACC_PRODUCT_CONFIG_PATH": os.path.join(root, "config", "product.json"),
+        "CODEBUDDY_CONFIG_DIR": os.path.join(root, "config"),
+    })
+    return env
+
+
+def profile_status() -> list[dict]:
+    rows = []
+    for name in profile_names():
+        row = {"profile": name, "label": _profile_label(name),
+               "root": "", "ready": False, "auth": False, "authFiles": []}
+        try:
+            root = profile_root(name)
+        except RuntimeError as exc:
+            row["error"] = str(exc)
+            rows.append(row)
+            continue
+        row["root"] = root
+        row["ready"] = os.path.isfile(os.path.join(root, "config", "product.json"))
+        auth_dir = os.path.join(root, "AppData", "Local", "CodeBuddyExtension",
+                                "Data", "Public", "auth")
+        if os.path.isdir(auth_dir):
+            row["authFiles"] = sorted(x for x in os.listdir(auth_dir) if x.endswith(".info"))
+        row["auth"] = bool(row["authFiles"])
+        rows.append(row)
+    return rows
+
+
 def resolve_codebuddy(force: bool = False):
     if not force and _bin_cache["path"] and os.path.isfile(_bin_cache["path"]):
         return _bin_cache["path"], _bin_cache["source"]
@@ -147,7 +245,8 @@ def resolve_codebuddy(force: bool = False):
     )
 
 
-def _run_codebuddy(argv: list[str], timeout: float = 120) -> subprocess.CompletedProcess:
+def _run_codebuddy(argv: list[str], timeout: float = 120,
+                   profile: str = "") -> subprocess.CompletedProcess:
     path = resolve_codebuddy()[0]
     if path.lower().endswith(".ps1"):
         cmd = ["pwsh", "-NoLogo", "-NoProfile", "-File", path] + argv
@@ -161,21 +260,22 @@ def _run_codebuddy(argv: list[str], timeout: float = 120) -> subprocess.Complete
         errors="replace",
         timeout=timeout,
         stdin=subprocess.DEVNULL,
+        env=_profile_env(profile),
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0,
     )
 
 
-def codebuddy_version() -> str:
+def codebuddy_version(profile: str = "") -> str:
     try:
-        proc = _run_codebuddy(["--version"], timeout=60)
+        proc = _run_codebuddy(["--version"], timeout=60, profile=profile)
         return (proc.stdout or proc.stderr or "").strip().splitlines()[0] if (proc.stdout or proc.stderr) else ""
     except Exception as exc:  # noqa: BLE001
         return f"(read failed: {exc})"
 
 
-def _models() -> list[str]:
+def _models(profile: str = "") -> list[str]:
     try:
-        proc = _run_codebuddy(["--help"], timeout=60)
+        proc = _run_codebuddy(["--help"], timeout=60, profile=profile)
     except Exception:
         return []
     text = proc.stdout or ""
@@ -395,66 +495,79 @@ def _iso(value):
         return str(value)
 
 
-def fetch_sessions(limit: int = 200) -> list[dict]:
-    root = os.path.join(os.path.expanduser("~"), ".codebuddy", "projects")
-    items = []
-    if not os.path.isdir(root):
-        return items
-    for project in os.listdir(root):
-        pdir = os.path.join(root, project)
-        if not os.path.isdir(pdir):
+def _session_roots() -> list[tuple[str, str]]:
+    """(profile, projects dir)：本机默认账号 + 各隔离 profile 的会话目录。"""
+    roots = [("", os.path.join(os.path.expanduser("~"), ".codebuddy", "projects"))]
+    for name in profile_names():
+        try:
+            roots.append((name, os.path.join(profile_root(name), "config", "projects")))
+        except RuntimeError:
             continue
-        for name in os.listdir(pdir):
-            if not name.endswith(".jsonl"):
+    return roots
+
+
+def fetch_sessions(limit: int = 200) -> list[dict]:
+    items = []
+    for profile, root in _session_roots():
+        if not os.path.isdir(root):
+            continue
+        for project in os.listdir(root):
+            pdir = os.path.join(root, project)
+            if not os.path.isdir(pdir):
                 continue
-            path = os.path.join(pdir, name)
-            rows = _jsonl(path)
-            if not rows:
-                continue
-            sid = name[:-6]
-            cwd = ""
-            title = ""
-            last_at = ""
-            model = ""
-            count = 0
-            for row in rows:
-                cwd = row.get("cwd") or cwd
-                if row.get("type") == "message":
-                    count += 1
-                    role = row.get("role")
-                    text = ""
-                    for block in row.get("content") or []:
-                        if block.get("type") in ("input_text", "output_text", "text"):
-                            text += block.get("text") or ""
-                    if role == "user" and not title:
-                        title = " ".join(text.split())[:100]
-                    model = ((row.get("providerData") or {}).get("model")
-                             or row.get("providerData", {}).get("requestModelId") or model)
-                    last_at = _iso(row.get("timestamp")) or last_at
-            if not title:
-                title = sid
-            items.append({
-                "id": sid, "cwd": cwd or "", "title": title,
-                "status": "stored", "messageCount": count,
-                "createdAt": _iso(rows[0].get("timestamp")),
-                "updatedAt": last_at, "lastAt": last_at,
-                "providerId": "codebuddy", "modelId": model,
-                "mode": "agent", "isSubagent": False,
-                "parentSessionId": None, "subagentType": None,
-                "subagentPrompt": title, "usage": None,
-                "jobRunning": False, "jobStatus": "stored",
-                "_codebuddy": True, "_sessionFile": path,
-            })
+            for name in os.listdir(pdir):
+                if not name.endswith(".jsonl"):
+                    continue
+                path = os.path.join(pdir, name)
+                rows = _jsonl(path)
+                if not rows:
+                    continue
+                sid = name[:-6]
+                cwd = ""
+                title = ""
+                last_at = ""
+                model = ""
+                count = 0
+                for row in rows:
+                    cwd = row.get("cwd") or cwd
+                    if row.get("type") == "message":
+                        count += 1
+                        role = row.get("role")
+                        text = ""
+                        for block in row.get("content") or []:
+                            if block.get("type") in ("input_text", "output_text", "text"):
+                                text += block.get("text") or ""
+                        if role == "user" and not title:
+                            title = " ".join(text.split())[:100]
+                        model = ((row.get("providerData") or {}).get("model")
+                                 or row.get("providerData", {}).get("requestModelId") or model)
+                        last_at = _iso(row.get("timestamp")) or last_at
+                if not title:
+                    title = sid
+                items.append({
+                    "id": sid, "cwd": cwd or "", "title": title,
+                    "status": "stored", "messageCount": count,
+                    "createdAt": _iso(rows[0].get("timestamp")),
+                    "updatedAt": last_at, "lastAt": last_at,
+                    "providerId": "codebuddy", "modelId": model,
+                    "profile": profile, "profileLabel": _profile_label(profile),
+                    "mode": "agent", "isSubagent": False,
+                    "parentSessionId": None, "subagentType": None,
+                    "subagentPrompt": title, "usage": None,
+                    "jobRunning": False, "jobStatus": "stored",
+                    "_codebuddy": True, "_sessionFile": path,
+                })
     items.sort(key=lambda x: x.get("lastAt") or "", reverse=True)
     return items[:max(1, int(limit))]
 
 
-def fetch_messages(session: str, offset: int = 0) -> dict:
-    sessions = fetch_sessions(1000)
-    item = next((x for x in sessions if x["id"] == session), None)
-    if not item:
+def fetch_messages(session: str, offset: int = 0, profile: str = "") -> dict:
+    sessions = [x for x in fetch_sessions(1000) if x["id"] == session]
+    if profile:
+        sessions = [x for x in sessions if (x.get("profile") or "") == profile]
+    if not sessions:
         return {"total": 0, "messages": []}
-    messages = _session_messages(item["_sessionFile"])
+    messages = _session_messages(sessions[0]["_sessionFile"])
     return {"total": len(messages), "messages": messages[max(0, int(offset)):]}
 
 
@@ -545,6 +658,7 @@ def _job_status(job: dict) -> dict:
         "cwd": job.get("cwd"), "sessionId": info.get("sessionId") or job.get("sessionId") or "",
         "effectiveModel": info.get("model") or job.get("model"),
         "requestedModel": job.get("model"),
+        "profile": job.get("profile") or "",
     })
     if info["sessionId"] and job.get("sessionId") != info["sessionId"]:
         job["sessionId"] = info["sessionId"]
@@ -591,6 +705,8 @@ def start_job(args: dict) -> dict:
     cwd = _expand(str(args.get("cwd") or CFG.get("default_cwd") or os.getcwd()))
     if not os.path.isdir(cwd):
         raise RuntimeError(f"cwd does not exist: {cwd}")
+    profile = str(args.get("profile") or CFG.get("default_profile") or "").strip()
+    env = _profile_env(profile)  # 未知 profile 直接抛错，不落到默认账号
     job_id = "cbjob_" + time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
     stream = _job_stream_path(job_id)
     process_log = _job_process_path(job_id)
@@ -604,6 +720,7 @@ def start_job(args: dict) -> dict:
         "jobId": job_id, "sessionId": args.get("resume_session") or "",
         "cmd": argv, "cwd": cwd, "model": args.get("model") or CFG.get("default_model"),
         "provider": args.get("provider") or CFG.get("default_provider"),
+        "profile": profile, "profileLabel": _profile_label(profile),
         "reasoningEffort": args.get("reasoning_effort") or CFG.get("default_reasoning_effort"),
         "policy": args.get("policy") or CFG.get("default_policy"),
         "prompt": args["prompt"], "startedAtEpoch": time.time(),
@@ -615,7 +732,7 @@ def start_job(args: dict) -> dict:
          open(process_log, "w", encoding="utf-8", errors="replace") as err:
         proc = subprocess.Popen(
             argv, cwd=cwd, stdout=out, stderr=err, stdin=subprocess.DEVNULL,
-            creationflags=creation, close_fds=True,
+            env=env, creationflags=creation, close_fds=True,
         )
     _live_procs[job_id] = proc
     meta["pid"] = proc.pid
@@ -680,14 +797,18 @@ def tool_run(args: dict) -> str:
             prepared["prompt"].rstrip()
             + "\n\n[运行约束] 不要使用 WebSearch 或 WebFetch；只使用本地文件、命令和已有上下文。"
         )
-    meta = start_job(prepared)
+    try:
+        meta = start_job(prepared)
+    except RuntimeError as exc:
+        return f"错误：{exc}"
     viewer = _ensure_viewer()
     wait_seconds = min(float(args.get("wait_seconds") or 0), float(CFG["max_wait_seconds"]))
     info = wait_for_job(meta, wait_seconds) if wait_seconds else _job_status(meta)
     lines = [
         f"已派发到 CodeBuddy：{meta['jobId']}",
         f"  工作目录 : {meta['cwd']}",
-        f"  请求参数 : {meta.get('provider') or 'magpie'} / {meta['model']} / effort {meta['reasoningEffort']} / policy {meta['policy']}",
+        f"  账号     : {_profile_display(meta.get('profile'))}",
+        f"  请求参数 : {meta.get('provider') or 'codebuddy'} / {meta['model']} / effort {meta['reasoningEffort']} / policy {meta['policy']}",
         f"  事件流   : {meta['logFile']}",
         f"  sessionId: {info.get('sessionId') or '（尚未产生）'}",
         f"  状态     : {info['status']}",
@@ -709,7 +830,8 @@ def tool_status(args: dict) -> str:
         f"状态     : {info['status']}",
         f"sessionId: {info.get('sessionId') or '-'}",
         f"目录     : {job.get('cwd')}",
-        f"供应商   : {job.get('provider') or CFG.get('default_provider')}",
+        f"账号     : {_profile_display(info.get('profile') or job.get('profile') or '')}",
+        f"供应商   : {job.get('provider') or CFG.get('default_provider')}（标注字段，CodeBuddy 由账号决定）",
         f"模型     : {info.get('effectiveModel') or job.get('model')}",
         f"工具调用 : {info.get('toolCalls', 0)}",
         f"思考字符 : {info.get('thinkingChars', 0)}",
@@ -781,7 +903,8 @@ def tool_sessions(args: dict) -> str:
         return "CodeBuddy 里还没有会话。"
     lines = [f"最近 {len(sessions)} 个 CodeBuddy 会话：", ""]
     for item in sessions:
-        lines.append(f"- {item['id']} [{item.get('modelId') or '-'}] {item['title']}")
+        tag = f"[{item.get('profile')}] " if item.get("profile") else ""
+        lines.append(f"- {item['id']} [{item.get('modelId') or '-'}] {tag}{item['title']}")
         lines.append(f"    {item['messageCount']} 条  {item.get('cwd') or '-'}")
     return "\n".join(lines)
 
@@ -794,15 +917,27 @@ def tool_viewer(args: dict) -> str:
 
 
 def tool_doctor(args: dict) -> str:
-    lines = [f"CodeBuddy adapter {DA.VERSION} · pid {os.getpid()}"]
+    lines = [f"CodeBuddy adapter {VERSION} · pid {os.getpid()}"]
+    probe = str(args.get("profile") or CFG.get("default_profile") or "").strip()
     try:
         path, source = resolve_codebuddy(True)
-        lines += [f"codebuddy: {path}", f"source: {source}", f"version: {codebuddy_version()}"]
+        lines += [f"codebuddy: {path}", f"source: {source}", f"version: {codebuddy_version(probe)}"]
     except Exception as exc:  # noqa: BLE001
         lines.append(f"codebuddy: missing ({exc})")
     lines += [
-        f"models: {', '.join(_models()[:8]) or '-'}",
+        f"models: {', '.join(_models(probe)[:8]) or '-'}",
         f"default: {CFG.get('default_provider')} / {CFG.get('default_model')} / effort {CFG.get('default_reasoning_effort')}",
+        f"default profile: {_profile_display(CFG.get('default_profile') or '')}",
+        f"profiles root: {PROFILES_ROOT}",
+    ]
+    for row in profile_status():
+        state = "ready" if row["ready"] and row["auth"] else ("no-auth" if row["ready"] else "missing")
+        lines.append(
+            f"  profile {row['profile']} · {row['label']} · {state} · "
+            f"{row['root'] or row.get('error') or '-'} · "
+            f"{', '.join(row['authFiles']) or '未登录'}"
+        )
+    lines += [
         f"runs: {RUNS_DIR}",
         f"viewer: {_ensure_viewer().get('url')}",
     ]
@@ -817,12 +952,17 @@ def tool_cli(args: dict) -> str:
         argv = [str(x) for x in raw]
     else:
         return "错误：args 需要是数组或字符串。"
+    profile = str(args.get("profile") or "").strip()
     try:
-        proc = _run_codebuddy(argv, timeout=float(args.get("timeout_seconds") or 120))
+        proc = _run_codebuddy(argv, timeout=float(args.get("timeout_seconds") or 120),
+                              profile=profile)
     except subprocess.TimeoutExpired:
         return "命令超时。"
+    except RuntimeError as exc:
+        return f"错误：{exc}"
     limit = int(args.get("max_chars") or 12000)
-    body = f"$ codebuddy {' '.join(argv)}\nexit={proc.returncode}\n\n"
+    body = (f"$ codebuddy {' '.join(argv)}\n"
+            f"profile={profile or 'default'}\nexit={proc.returncode}\n\n")
     out = (proc.stdout or "").strip()
     err = (proc.stderr or "").strip()
     body += out[:limit]
@@ -843,7 +983,8 @@ def tool_live_messages(args: dict) -> dict:
         offset = max(0, int(args.get("offset") or 0))
     except (TypeError, ValueError):
         offset = 0
-    return {"ok": True, **fetch_messages(session, offset)}
+    profile = str(args.get("profile") or "").strip()
+    return {"ok": True, **fetch_messages(session, offset, profile)}
 
 
 def panel_html() -> str:
@@ -895,8 +1036,10 @@ TOOLS = [
             "properties": {
                 "prompt": {"type": "string"},
                 "cwd": {"type": "string"},
-                "provider": {"type": "string", "description": "默认 magpie；CodeBuddy 通过 group/ 路由使用本地 Magpie。"},
-                "model": {"type": "string", "description": "默认 group/auto-deepseek-v4-1-flash；也可选 hy4-preview、glm-5.3 等。"},
+                "profile": {"type": "string", "enum": ["cn", "intl"],
+                            "description": "账号 profile：cn=WorkBuddy 国内版，intl=WorkBuddy 国际版；不传用本机默认账号。"},
+                "provider": {"type": "string", "description": "标注字段；CodeBuddy 模型由登录账号决定，无供应商概念。"},
+                "model": {"type": "string", "description": "默认 deepseek-v4.1-flash；也可选 hy4-preview、glm-5.3、kimi-k3 等。"},
                 "reasoning_effort": {"type": "string", "enum": ["minimal", "low", "medium", "high", "xhigh", "max"]},
                 "policy": {"type": "string", "enum": ["read-only", "workspace-write", "full-access"],
                            "description": "默认 full-access（headless 下自动加 -y）；只读审查用 read-only。"},
@@ -919,8 +1062,10 @@ TOOLS = [
     {"name": "codebuddy_sessions", "description": "列出 CodeBuddy 历史会话。", "inputSchema": {"type": "object", "properties": {
         "limit": {"type": "integer"}}}},
     {"name": "codebuddy_viewer", "description": "确保共享实时监控页运行并返回 URL。", "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "codebuddy_doctor", "description": "检查 CodeBuddy CLI、模型、数据目录和监控页。", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "codebuddy_doctor", "description": "检查 CodeBuddy CLI、模型、账号 profile、数据目录和监控页。",
+     "inputSchema": {"type": "object", "properties": {"profile": {"type": "string", "enum": ["cn", "intl"]}}}},
     {"name": "codebuddy_cli", "description": "透传 CodeBuddy CLI 命令。", "inputSchema": {"type": "object", "properties": {
+        "profile": {"type": "string", "enum": ["cn", "intl"]},
         "args": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]},
         "timeout_seconds": {"type": "number"}, "max_chars": {"type": "integer"}}, "required": ["args"]}},
     {
@@ -937,7 +1082,8 @@ TOOLS = [
     {"name": "codebuddy_live_sessions", "description": "面板数据通道：CodeBuddy 会话列表。",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "codebuddy_live_messages", "description": "面板数据通道：CodeBuddy 消息增量。",
-     "inputSchema": {"type": "object", "properties": {"session": {"type": "string"}, "offset": {"type": "integer"}},
+     "inputSchema": {"type": "object", "properties": {"session": {"type": "string"},
+                     "profile": {"type": "string"}, "offset": {"type": "integer"}},
                      "required": ["session"]}},
 ]
 
@@ -984,7 +1130,7 @@ def handle(msg: dict) -> None:
         send_result(req_id, {
             "protocolVersion": params.get("protocolVersion") or PROTOCOL_FALLBACK,
             "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}},
-            "serverInfo": {"name": "codebuddy-subagent", "version": DA.VERSION},
+            "serverInfo": {"name": "codebuddy-subagent", "version": VERSION},
             "instructions": "CodeBuddy subagent tools: codebuddy_run -> codebuddy_wait/status/result. Web disabled by default.",
         })
         return

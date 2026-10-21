@@ -137,6 +137,7 @@
   .badge.main{color:var(--faint);border:1px solid var(--border)}
   .badge.engine{color:var(--muted);border:1px solid var(--border-soft);background:var(--panel2)}
   .badge.engine.codebuddy{color:var(--green);border-color:var(--green-soft);background:var(--green-soft)}
+.badge.profile{color:var(--muted);border:1px dashed var(--border);background:transparent;letter-spacing:.02em}
   .badge.job.completed{color:var(--green);border:1px solid var(--green-soft);background:var(--green-soft)}
   .badge.job.failed,.badge.job.interrupted{color:var(--red);border:1px solid rgba(192,84,79,.22);background:rgba(192,84,79,.08)}
   .badge.job.cancelled,.badge.job.stale,.badge.job.starting{color:var(--amber);border:1px solid var(--amber-soft);background:var(--amber-soft)}
@@ -878,6 +879,10 @@ function sessionItem(s, childCount, depth){
   const engineBadge = state.engineFilter === 'all'
     ? '<span class="badge engine ' + engine + '">' + esc(engineDisplay(s)) + '</span>'
     : '';
+  const profileBadge = s.profile
+    ? '<span class="badge profile" title="登录账号 profile：' + esc(s.profileLabel || s.profile) +
+      '">' + esc(s.profile) + '</span>'
+    : '';
   const twist = childCount
     ? '<button class="twist' + (collapsed ? ' closed' : '') + '" data-twist="' + esc(s.id) + '"' +
       ' title="' + (collapsed ? '展开' : '收起') + ' ' + childCount + ' 个子代理">' +
@@ -890,9 +895,11 @@ function sessionItem(s, childCount, depth){
     '<div class="s-row1"><span class="s-title">' + esc(displayTitle(s)) + '</span>' +
       twist + (live ? '<span class="dot-live"></span>' : '') + '</div>' +
     '<div class="s-row2">' + engineBadge + badge + statusBadge +
+      profileBadge +
       '<span class="s-time">' + timeAgo(s.lastAt || s.updatedAt) + '</span>' +
       '<span class="s-count">' + (s.messageCount || 0) + ' 条</span></div>';
   el.title = displayTitle(s) + '\n' + s.id + '\n' + (s.cwd || '') +
+             (s.profile ? '\n账号：' + (s.profileLabel || s.profile) + '（' + s.profile + '）' : '') +
              '\n状态：' + status.label +
              (s.jobReason ? '\n原因：' + s.jobReason : '') +
              (s.jobError ? '\n错误：' + s.jobError : '') +
@@ -1023,6 +1030,8 @@ function updateHead(){
     }
   }
   if (s.providerId || s.modelId) parts.push('<span class="pill">' + esc([s.providerId, s.modelId].filter(Boolean).join(' / ')) + '</span>');
+  if (s.profile) parts.push('<span class="pill" title="登录账号 profile：' + esc(s.profile) + '">账号 ' +
+    esc(s.profileLabel || s.profile) + '</span>');
   if (s.mode) parts.push('<span class="pill">' + esc(s.mode) + '</span>');
   parts.push('<span class="pill">' + (s.messageCount || 0) + ' 条消息</span>');
   if (s.usage && s.usage.tokens) parts.push('<span class="pill">' + Number(s.usage.tokens).toLocaleString() + ' tokens</span>');
