@@ -1017,6 +1017,8 @@ function updateHead(){
   const status = statusInfo(s);
   const parts = [];
   parts.push('<span class="pill engine">' + esc(engineDisplay(s)) + '</span>');
+  if (s.profile) parts.push('<span class="pill" title="登录账号 profile：' + esc(s.profile) + '">账号 ' +
+    esc(s.profileLabel || s.profile) + '</span>');
   parts.push('<span class="pill ' + esc(status.key) + '">' +
     (live ? '<span class="pulse"></span>' : '') + esc(status.label) + '</span>');
   if (s.isSubagent){
@@ -1030,8 +1032,6 @@ function updateHead(){
     }
   }
   if (s.providerId || s.modelId) parts.push('<span class="pill">' + esc([s.providerId, s.modelId].filter(Boolean).join(' / ')) + '</span>');
-  if (s.profile) parts.push('<span class="pill" title="登录账号 profile：' + esc(s.profile) + '">账号 ' +
-    esc(s.profileLabel || s.profile) + '</span>');
   if (s.mode) parts.push('<span class="pill">' + esc(s.mode) + '</span>');
   parts.push('<span class="pill">' + (s.messageCount || 0) + ' 条消息</span>');
   if (s.usage && s.usage.tokens) parts.push('<span class="pill">' + Number(s.usage.tokens).toLocaleString() + ' tokens</span>');
